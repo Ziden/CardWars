@@ -1,0 +1,341 @@
+package truco.plugin.listeners;
+
+import java.util.HashMap;
+import me.libraryaddict.scoreboard.ScoreboardManager;
+import org.bukkit.Bukkit;
+import org.bukkit.Location;
+import org.bukkit.enchantments.Enchantment;
+import org.bukkit.entity.*;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
+import org.bukkit.event.Listener;
+import org.bukkit.event.entity.EntityShootBowEvent;
+import org.bukkit.event.entity.ProjectileHitEvent;
+import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerMoveEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
+import truco.plugin.cards.ControleCartas;
+import truco.plugin.CardWarsPlugin;
+import truco.plugin.arena.Arena;
+import truco.plugin.arena.Arena.Team;
+import truco.plugin.itens.BombaFumaca;
+import truco.plugin.data.mysql.MatchHistoryDB;
+import truco.plugin.itens.CustomItem;
+import truco.plugin.itens.Items;
+import truco.plugin.matchmaking.PlayerIngame;
+import truco.plugin.matchmaking.Threads.MatchMaker;
+import truco.plugin.utils.*;
+import truco.plugin.cards.StatusEffect;
+import truco.plugin.cards.skills.skilltypes.Trap;
+import truco.plugin.damage.DamageManager;
+import truco.plugin.events.CustomDamageEvent;
+import truco.plugin.events.CustomDamageEvent.CausaDano;
+import truco.plugin.functions.MakeVanish;
+import truco.plugin.functions.ScoreCWs;
+
+/**
+ *
+ * @author Carlos André Feldmann Júnior
+ */
+public class GameListener implements Listener {
+
+    public static HashMap<Player, PlayerIngame> infs = new HashMap();
+
+    @EventHandler(priority = EventPriority.HIGH)
+    public void fixEnchants(final CustomDamageEvent ev) {
+        if (ev.isCancelled()) {
+            return;
+        }
+        if (ev.getPlayerBateu() != null) {
+            if (ev.getPlayerBateu().getItemInHand() != null) {
+                if (ev.getPlayerBateu().getItemInHand().containsEnchantment(Enchantment.FIRE_ASPECT)) {
+                    final int ticks = ev.getPlayerBateu().getItemInHand().getEnchantmentLevel(Enchantment.FIRE_ASPECT) * 80;
+                    Bukkit.getScheduler().scheduleSyncDelayedTask(CardWarsPlugin._instance, new Runnable() {
+
+                        @Override
+                        public void run() {
+                            DamageManager.addFireTicks(ev.getTomou(), ticks);
+                        }
+                    }, 2);
+                }
+                if (ev.getPlayerBateu().getItemInHand().containsEnchantment(Enchantment.KNOCKBACK)) {
+                    double lvl = ev.getPlayerBateu().getItemInHand().getEnchantmentLevel(Enchantment.KNOCKBACK);
+                    lvl = 1 + (lvl * 0.7);
+                    ev.addKnockBack("KnockBack Enchantment", lvl);
+                }
+
+            }
+        }
+    }
+
+    @EventHandler(priority = EventPriority.LOWEST)
+    public void status(CustomDamageEvent ev) {
+        if (ev.getPlayerBateu() != null) {
+            if (StatusEffect.hasStatusEffect(ev.getPlayerBateu(), StatusEffect.StatusMod.STUN)) {
+                ev.setCancelled("Stun");
+            }
+        }
+    }
+
+    @EventHandler(priority = EventPriority.LOW)
+    public void changeItensDamage(CustomDamageEvent ev) {
+        if (ev.getPlayerBateu() == null) {
+            return;
+        }
+        Player p = ev.getPlayerBateu();
+
+        String s = CustomItem.getItem(p.getItemInHand());
+
+        if (s != null) {
+            if (s.equalsIgnoreCase(Items.garramadeira.getName())) {
+                ev.setDamage(3);
+            } else if (s.equalsIgnoreCase(Items.garrapedra.getName())) {
+                ev.setDamage(4);
+            } else if (s.equalsIgnoreCase(Items.garraferro.getName())) {
+                ev.setDamage(5);
+
+            } else if (s.equalsIgnoreCase(Items.garraouro.getName())) {
+                ev.setDamage(6);
+            }
+        }
+    }
+
+    // BLOOOOOOOOD !
+    @EventHandler(priority = EventPriority.HIGHEST)
+    void dano(CustomDamageEvent ev) {
+//MIGRANDOOOOOOOOoo
+        if (ev.getFinalDamage() > 0 && !ev.isCancelled()) {
+
+            Player bateu = ev.getPlayerBateu();
+            Player tomou = ev.getPlayerTomou();
+            if (bateu == null || tomou == null) {
+                return;
+            }
+
+            BombaFumaca.bate(ev);
+            BombaFumaca.tomaDano(ev);
+
+            if ((ev.getCause() == CausaDano.ATAQUE)) {
+
+                if (ItemUtils.isSword(bateu.getItemInHand().getType()) && tomou.isBlocking()) {
+                    double angle = LocUtils.getAngle(bateu.getLocation().getDirection(), tomou.getLocation().getDirection());
+                    if (angle > 100) {
+                        ev.addDamageMult(0.85, "Bloqueando");
+                        bateu.sendMessage("§aAtaque Bloqueado");
+                    }
+                }
+            }
+
+            bateu.updateInventory();
+
+            if (StatusEffect.hasStatusEffect(tomou, StatusEffect.StatusMod.CONGELADO)) {
+                int numero = CardWarsPlugin.random.nextInt(100);
+                if (numero < 25) {
+                    StatusEffect.removeStatusEffect(tomou, StatusEffect.StatusMod.CONGELADO);
+                }
+            }
+
+        }
+
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void flechabate(ProjectileHitEvent ev) {
+        if (ev.getEntity().hasMetadata("magia")) {
+            ev.getEntity().remove();
+        }
+    }
+
+    @EventHandler
+    public void move(PlayerMoveEvent ev) {
+        // changed block Z X coords
+        if (ev.getFrom().getBlockX() != ev.getTo().getBlockX() || ev.getFrom().getBlockZ() != ev.getTo().getBlockZ()) {
+            Trap.move(ev);
+        }
+        if (StatusEffect.hasStatusEffect(ev.getPlayer(), StatusEffect.StatusMod.STUN) || StatusEffect.hasStatusEffect(ev.getPlayer(), StatusEffect.StatusMod.SNARE) || StatusEffect.hasStatusEffect(ev.getPlayer(), StatusEffect.StatusMod.CONGELADO)) {
+            if (Utils.hasChangedBlockCoordinates(ev.getFrom(), ev.getTo())) {
+                Location from = ev.getFrom();
+                Location to = ev.getTo();
+                double x = Math.floor(from.getX());
+                double z = Math.floor(from.getZ());
+                x += .5;
+                z += .5;
+                ev.getPlayer().teleport(new Location(from.getWorld(), x, from.getY(), z, from.getYaw(), from.getPitch()));
+
+            }
+        }
+        if (ev.getTo().getY() <= -10) {
+            ev.getPlayer().damage(50000);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void inventario(final InventoryClickEvent ev) {
+
+        String citem = CustomItem.getItem(ev.getCurrentItem());
+        if (citem != null && citem.equals(Items.icaster.getName())) {
+            ev.setCancelled(true);
+            ev.getWhoClicked().closeInventory();
+            return;
+        }
+
+    }
+
+    public void logoucomequipe(final Player pl, final Team t) {
+        final Arena ar = CardWarsPlugin.getArena();
+
+        if (ar != null) {
+            ar.startGame();
+            final int gameid = ar.getGameId();
+            if (ar.getTeam(pl.getUniqueId()) == null) {
+
+                ar.addPlayer(pl, t);
+                ar.tp(pl);
+
+                ChatUtils.sendMessage(pl, "§b§lVocê está na equipe " + t.getCor() + "§l" + t.getName().toLowerCase() + "§r!");
+                ar.startPlayer(pl);
+                ControleCartas.updateInventoryCards(pl, true);
+                Utils.clearPlayerEffects(pl);
+                pl.setHealth(pl.getMaxHealth());
+                new Thread(new Runnable() {
+
+                    @Override
+                    public void run() {
+
+                        MatchHistoryDB.addPlayerHistory(pl, t, gameid, MatchMaker.db.getArmor(pl.getUniqueId()));
+                    }
+                }).start();
+            } else {
+                pl.getInventory().setHelmet(null);
+            }
+            if (t.equals(Arena.Team.RED)) {
+                Utils.sendTitle(pl, "§cVocê está na equipe Vermelha", "§aBom Jogo", 0, 20 * 3, 10);
+            } else {
+
+                Utils.sendTitle(pl, "§9Você está na equipe Azul", "§aBom Jogo", 0, 20 * 3, 10);
+            }
+            ar.createScore(pl);
+            new Thread(new Runnable() {
+
+                @Override
+                public void run() {
+                    final int elo = MatchMaker.db.getElo(pl.getUniqueId());
+                    Bukkit.getScheduler().scheduleSyncDelayedTask(CardWarsPlugin._instance, new Runnable() {
+
+                        @Override
+                        public void run() {
+                            if (pl != null) {
+                                ScoreCWs.setIngameName(elo, pl, t);
+                            }
+                        }
+                    });
+                }
+            }).start();
+
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void join(final PlayerJoinEvent ev) {
+
+        if (ev.getPlayer() == null) {
+            return;
+        }
+
+        ScoreboardManager.registerScoreboard(ev.getPlayer());
+        new Thread(new Runnable() {
+
+            @Override
+            public void run() {
+                //DB.startPlayer(ev.getPlayer());
+                final PlayerIngame ingame = getPlayerInGameBr(ev.getPlayer());
+
+                if (ingame != null) {
+
+                    Bukkit.getScheduler().scheduleSyncDelayedTask(CardWarsPlugin._instance,
+                            new Runnable() {
+
+                                @Override
+                                public void run() {
+
+                                    final Arena.Team t;
+                                    if (ingame.team == 0) {
+                                        t = Arena.Team.RED;
+                                    } else {
+                                        t = Arena.Team.BLUE;
+                                    }
+                                    logoucomequipe(ev.getPlayer(), t);
+
+                                }
+                            });
+                } else {
+                    if (ev.getPlayer().isOp()) {
+                        Bukkit.getScheduler().scheduleSyncDelayedTask(CardWarsPlugin._instance, new Runnable() {
+
+                            @Override
+                            public void run() {
+                                Arena ar = CardWarsPlugin.getArena();
+                                if (ar != null) {
+                                    if (ar.getTeam(ev.getPlayer().getUniqueId()) == null) {
+                                        ar.addPlayer(ev.getPlayer(), Arena.Team.SPEC);
+                                        ev.getPlayer().sendMessage("§cTu ta de spec!");
+                                        ar.addSpec(ev.getPlayer());
+                                        Utils.sendTitle(ev.getPlayer(), "§7Tu ta de espectador", "§7cuidado o que você faz", 0, 20 * 3, 10);
+                                    }
+                                    ar.createScore(ev.getPlayer());
+                                }
+
+                            }
+                        });
+
+                    } else {
+                        Bukkit.getScheduler().scheduleSyncDelayedTask(CardWarsPlugin._instance, new Runnable() {
+
+                            @Override
+                            public void run() {
+                                ev.getPlayer().kickPlayer("§cVocê não deveria estar aqui!");
+                            }
+                        }, 20 * 5);
+
+                    }
+
+                }
+            }
+        }).start();
+
+    }
+
+    public PlayerIngame getPlayerInGameBr(Player p) {
+
+        if (infs.containsKey(p)) {
+            return infs.get(p);
+        } else {
+
+            try {
+
+                PlayerIngame pi = MatchMaker.db.getIngamePlayer(p);
+                if (pi != null) {
+                    infs.put(p, pi);
+                }
+                return pi;
+            } catch (NullPointerException e) {
+                //e.printStackTrace();
+                return null;
+            }
+        }
+
+    }
+
+    @EventHandler
+    public void leave(PlayerQuitEvent e) {
+    }
+
+    @EventHandler(priority = EventPriority.HIGH)
+    public void atira(EntityShootBowEvent ev) {
+        if (!ev.isCancelled()) {
+            BombaFumaca.atiraFlecha(ev);
+
+        }
+    }
+}

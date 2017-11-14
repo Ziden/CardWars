@@ -1,0 +1,23 @@
+name: CardWars
+version: 0.4
+main: truco.plugin.CardWarsPlugin
+commands: 
+    cws:
+    arena:
+    grupo:
+    l:
+    tell:
+    r:
+    g:
+    ch:
+    sairfila:
+    spawn:
+    vender:
+    darmoedas:
+    vercartas:
+    cadm:
+    mostrar:
+    chatbb:
+    mv:
+    staff:
+softdepend: [WorldGuard, WorldEdit,HolographicDisplays,NewLibrarySystem]
